@@ -33,18 +33,6 @@ def init_db():
             sell_price REAL
         )
     """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS invoices (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            invoice_number TEXT,
-            date TEXT,
-            supplier TEXT,
-            total_amount REAL,
-            status TEXT,
-            image_path TEXT,
-            notes TEXT
-        )
-    """)
     conn.commit()
     conn.close()
 
@@ -102,7 +90,6 @@ elif pdf_btn:
 elif view_all:
     st.session_state.page = "dashboard"
 
-# لوحة التحكم الرئيسية وعرض المنتجات مع إمكانية فتح تفاصيل المنتج عند النقر
 if st.session_state.page == "dashboard":
     st.markdown("#### Barcode Scan / Live Search")
     search_col1, search_col2 = st.columns(2)
@@ -137,70 +124,131 @@ if st.session_state.page == "dashboard":
             category_dict[name] = category
         products_dict[name] += item_cost_val
 
-    st.markdown("#### Inventory Items (Click product name below to edit sizes, quantities & prices)")
+    st.markdown("#### Inventory Items (Click product name to manage sizes, quantities & prices)")
     
     if products_dict:
         for prod_name, total_cost in products_dict.items():
             cat = category_dict[prod_name]
             
-            # إنشاء صندوق تفاعلي لكل منتج يعرض تفاصيله وقياساته عند الضغط عليه
             with st.expander(f"📦 {prod_name}  |  Category: {cat}  |  Total Cost: ${total_cost:,.2f}"):
                 conn_sub = sqlite3.connect("liquor_store.db", timeout=10)
                 cur_sub = conn_sub.cursor()
-                cur_sub.execute("SELECT id, size, quantity_unit, quantity_carton, carton_capacity, cost_price, barcode FROM inventory WHERE name = ?", (prod_name,))
+                cur_sub.execute("SELECT id, size, quantity_unit, quantity_carton, carton_capacity, cost_price, sell_price, barcode, category FROM inventory WHERE name = ?", (prod_name,))
                 sizes_data = cur_sub.fetchall()
                 conn_sub.close()
 
-                st.markdown("##### Sizes, Quantities & Prices Management:")
-                
+                items_by_size = {item[1]: item for item in sizes_data}
+                standard_sizes = ["50", "100", "200", "375", "750", "1L", "1.75"]
+
+                st.markdown("##### Existing Sizes, Quantities & Prices:")
                 with st.form(key=f"form_prod_{prod_name}"):
                     updated_sizes = []
-                    for idx, s_row in enumerate(sizes_data):
-                        i_id, sz, q_u, q_c, c_cap, c_pr, b_code = s_row
-                        cap = c_cap if c_cap and c_cap > 0 else 12
-                        
-                        st.markdown(f"**Size: {sz}**")
-                        col_sz1, col_sz2, col_sz3, col_sz4 = st.columns(4)
-                        with col_sz1:
-                            new_u = st.number_input(f"Units ({sz})", value=int(q_u or 0), min_value=0, step=1, key=f"u_{i_id}")
-                        with col_sz2:
-                            new_c = st.number_input(f"Cartons ({sz})", value=int(q_c or 0), min_value=0, step=1, key=f"c_{i_id}")
-                        with col_sz3:
-                            new_cap = st.number_input(f"Cap ({sz})", value=int(cap), min_value=1, step=1, key=f"cap_{i_id}")
-                        with col_sz4:
-                            new_cost = st.number_input(f"Cost Price ($) ({sz})", value=float(c_pr or 0.0), min_value=0.0, step=0.1, key=f"cost_{i_id}")
-                        
-                        updated_sizes.append((i_id, new_u, new_c, new_cap, new_cost))
-                        st.markdown("---")
+                    for sz in standard_sizes:
+                        if sz in items_by_size:
+                            i_id, _, q_u, q_c, c_cap, c_pr, s_pr, _, _ = items_by_size[sz]
+                            cap = c_cap if c_cap and c_cap > 0 else 12
+                            
+                            st.markdown(f"**Size: {sz}**")
+                            col_u1, col_u2, col_u3, col_c1, col_c2, col_c3 = st.columns([2, 1, 1, 2, 1, 1])
+                            
+                            with col_u1:
+                                new_u = st.number_input(f"Units", value=int(q_u or 0), min_value=0, step=1, key=f"u_{i_id}")
+                            with col_u2:
+                                if st.form_submit_button(f"- (U)", key=f"min_u_{i_id}"):
+                                    new_u = max(0, new_u - 1)
+                            with col_u3:
+                                if st.form_submit_button(f"+ (U)", key=f"plus_u_{i_id}"):
+                                    new_u += 1
+
+                            with col_c1:
+                                new_c = st.number_input(f"Cartons", value=int(q_c or 0), min_value=0, step=1, key=f"c_{i_id}")
+                            with col_c2:
+                                if st.form_submit_button(f"- (C)", key=f"min_c_{i_id}"):
+                                    new_c = max(0, new_c - 1)
+                            with col_c3:
+                                if st.form_submit_button(f"+ (C)", key=f"plus_c_{i_id}"):
+                                    new_c += 1
+
+                            col_cap, col_cost, col_sell = st.columns(3)
+                            with col_cap:
+                                new_cap = st.number_input(f"Carton Capacity", value=int(cap), min_value=1, step=1, key=f"cap_{i_id}")
+                            with col_cost:
+                                new_cost = st.number_input(f"Cost Price ($)", value=float(c_pr or 0.0), min_value=0.0, step=0.1, key=f"cost_{i_id}")
+                            with col_sell:
+                                new_sell = st.number_input(f"Selling Price ($)", value=float(s_pr or 0.0), min_value=0.0, step=0.1, key=f"sell_{i_id}")
+                            
+                            updated_sizes.append((i_id, new_u, new_c, new_cap, new_cost, new_sell))
+                            st.markdown("---")
 
                     submit_card = st.form_submit_button(f"Save Changes for {prod_name}")
                     if submit_card:
                         conn_up = sqlite3.connect("liquor_store.db", timeout=10)
                         cur_up = conn_up.cursor()
-                        for item_id, nu, nc, ncap, ncost in updated_sizes:
+                        for item_id, nu, nc, ncap, ncost, nsell in updated_sizes:
                             cur_up.execute("""
-                                UPDATE inventory SET quantity_unit=?, quantity_carton=?, carton_capacity=?, cost_price=? WHERE id=?
-                            """, (nu, nc, ncap, ncost, item_id))
+                                UPDATE inventory SET quantity_unit=?, quantity_carton=?, carton_capacity=?, cost_price=?, sell_price=? WHERE id=?
+                            """, (nu, nc, ncap, ncost, nsell, item_id))
                         conn_up.commit()
                         conn_up.close()
-                        st.success(f"Product '{prod_name}' updated successfully! Refreshing...")
+                        st.success(f"Product '{prod_name}' updated successfully!")
                         st.rerun()
+
+                with st.expander(f"➕ Add New Size/Measurement & Update Price for {prod_name}"):
+                    with st.form(key=f"add_size_form_{prod_name}"):
+                        avail_sizes = [s for s in standard_sizes if s not in items_by_size]
+                        new_sz = st.selectbox(f"Select Size to Add", avail_sizes if avail_sizes else standard_sizes, key=f"new_sz_{prod_name}")
+                        add_type = st.radio("Add Type", ["Units (فردية)", "Cartons (كرتونة)"], key=f"add_type_{prod_name}")
+                        add_qty = st.number_input("Quantity to Add", min_value=1, value=1, step=1, key=f"add_qty_{prod_name}")
+                        add_cap = st.number_input("Carton Capacity", min_value=1, value=12, step=1, key=f"add_cap_{prod_name}")
+                        add_cost = st.number_input("New Cost Price ($)", min_value=0.0, value=0.0, step=0.1, key=f"add_cost_{prod_name}")
+                        add_sell = st.number_input("New Selling Price ($)", min_value=0.0, value=0.0, step=0.1, key=f"add_sell_{prod_name}")
+
+                        submit_add_size = st.form_submit_button("Add & Update Price")
+                        if submit_add_size:
+                            conn_add = sqlite3.connect("liquor_store.db", timeout=10)
+                            cur_add = conn_add.cursor()
+                            
+                            u_val = add_qty if "Units" in add_type else 0
+                            c_val = add_qty if "Cartons" in add_type else 0
+
+                            cur_add.execute("SELECT id, quantity_unit, quantity_carton FROM inventory WHERE name = ? AND size = ?", (prod_name, new_sz))
+                            existing_row = cur_add.fetchone()
+
+                            if existing_row:
+                                ex_id, ex_u, ex_c = existing_row
+                                if "Units" in add_type:
+                                    final_u = (ex_u or 0) + add_qty
+                                    cur_add.execute("UPDATE inventory SET quantity_unit = ?, cost_price = ?, sell_price = ? WHERE id = ?", (final_u, add_cost, add_sell, ex_id))
+                                else:
+                                    final_c = (ex_c or 0) + add_qty
+                                    cur_add.execute("UPDATE inventory SET quantity_carton = ?, cost_price = ?, sell_price = ? WHERE id = ?", (final_c, add_cost, add_sell, ex_id))
+                            else:
+                                sample_row = sizes_data[0] if sizes_data else ("", "", 0, 0, 12, 0.0, 0.0, "", cat)
+                                cur_add.execute("""
+                                    INSERT INTO inventory (barcode, category, name, size, quantity_unit, quantity_carton, carton_capacity, cost_price, sell_price)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """, (sample_row[7], sample_row[8], prod_name, new_sz, u_val, c_val, add_cap, add_cost, add_sell))
+
+                            conn_add.commit()
+                            conn_add.close()
+                            st.success("Size, quantity and new price added successfully!")
+                            st.rerun()
     else:
-		    st.info("No inventory items found.")
+        st.info("No inventory items found.")
 
 elif st.session_state.page == "add_item":
-    st.subheader("Add New Item to Inventory")
+    st.subheader("Add New Item")
     if st.button("Back to Dashboard"):
         st.session_state.page = "dashboard"
         st.rerun()
-
+    
     with st.form("add_item_form_web"):
         b_code = st.text_input("Barcode")
         category = st.selectbox("Category", ["Cognac", "Whisky", "Brandy", "Rum", "Vodka", "Tequila", "Liquor", "Variety"])
         name = st.text_input("Product Name")
         size = st.selectbox("Size", ["50", "100", "200", "375", "750", "1L", "1.75"])
-        qty_unit = st.number_input("Quantity (Units)", min_value=0, step=1)
-        qty_carton = st.number_input("Quantity (Cartons)", min_value=0, step=1)
+        qty_type = st.radio("Quantity Type", ["Units (فردية)", "Cartons (كرتونة)"])
+        qty_val = st.number_input("Quantity", min_value=0, step=1)
         carton_cap = st.selectbox("Carton Capacity", [12, 6, 24, 48])
         cost_price = st.number_input("Cost Price ($)", min_value=0.0, step=0.1)
         sell_price = st.number_input("Selling Price ($)", min_value=0.0, step=0.1)
@@ -208,12 +256,15 @@ elif st.session_state.page == "add_item":
         submitted = st.form_submit_button("Save Item")
         if submitted:
             if name.strip():
+                u_qty = qty_val if "Units" in qty_type else 0
+                c_qty = qty_val if "Cartons" in qty_type else 0
+
                 conn = sqlite3.connect("liquor_store.db", timeout=10)
                 cursor = conn.cursor()
                 cursor.execute("""
                     INSERT INTO inventory (barcode, category, name, size, quantity_unit, quantity_carton, carton_capacity, cost_price, sell_price)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (b_code, category, name.strip(), size, qty_unit, qty_carton, carton_cap, cost_price, sell_price))
+                """, (b_code, category, name.strip(), size, u_qty, c_qty, carton_cap, cost_price, sell_price))
                 conn.commit()
                 conn.close()
                 st.success("Product added successfully!")
@@ -225,7 +276,6 @@ elif st.session_state.page == "invoices":
     if st.button("Back to Dashboard"):
         st.session_state.page = "dashboard"
         st.rerun()
-    st.info("Invoices section is ready.")
 
 elif st.session_state.page == "print_report":
     st.subheader("Print Report")
