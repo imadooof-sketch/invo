@@ -7,6 +7,15 @@ import io
 
 st.set_page_config(page_title="Store Dashboard", page_icon="📊", layout="wide")
 
+# تنسيق CSS مخصص للواجهة
+st.markdown("""
+    <style>
+    .main { background-color: #f8f9fa; }
+    .stButton>button { width: 100%; border-radius: 6px; height: 3em; font-weight: bold; }
+    .metric-card { background-color: #ffffff; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 20px; }
+    </style>
+""", unsafe_allow_html=True)
+
 conn = sqlite3.connect("liquor_store.db", check_same_thread=False)
 cursor = conn.cursor()
 
@@ -36,13 +45,17 @@ if not df_calc.empty:
         total_value += ((cartons * cap) + units) * (cost / cap)
 
 st.markdown("### Store Dashboard")
-st.markdown(f"**Store Inventory Value: ${total_value:,.2f}**")
+st.markdown(f"""
+    <div class="metric-card">
+        <h4 style='margin:0; color: #31333F;'>Store Inventory Value: <span style='color: #0083B8;'>${total_value:,.2f}</span></h4>
+    </div>
+""", unsafe_allow_html=True)
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["Inventory SKU", "+ Add Item", "Invoices", "Print Report", "Export PDF"])
 
 with tab1:
     st.markdown("#### Barcode Scan / Manual")
-    scan_col1, scan_col2 = st.columns([3, 1])
+    scan_col1, scan_col2 = st.columns([4, 1])
     with scan_col1:
         barcode_input = st.text_input("Scan Barcode or Item SKU & press Enter", placeholder="Scan Barcode or Item SKU & press Enter", label_visibility="collapsed", key="barcode_search")
     with scan_col2:
@@ -68,14 +81,17 @@ with tab1:
 with tab2:
     st.subheader("Add New Item")
     with st.form("add_form_tab"):
-        b_code = st.text_input("Barcode")
-        b_cat = st.text_input("Category")
-        b_name = st.text_input("Name")
-        b_size = st.text_input("Size")
-        b_qu = st.number_input("Quantity Unit", min_value=0, step=1)
-        b_qc = st.number_input("Quantity Carton", min_value=0, step=1)
-        b_cap = st.number_input("Carton Capacity", min_value=1, value=12, step=1)
-        b_cost = st.number_input("Cost Price", min_value=0.0, step=0.1)
+        col_a, col_b = st.columns(2)
+        with col_a:
+            b_code = st.text_input("Barcode")
+            b_cat = st.text_input("Category")
+            b_name = st.text_input("Name")
+            b_size = st.text_input("Size")
+        with col_b:
+            b_qu = st.number_input("Quantity Unit", min_value=0, step=1)
+            b_qc = st.number_input("Quantity Carton", min_value=0, step=1)
+            b_cap = st.number_input("Carton Capacity", min_value=1, value=12, step=1)
+            b_cost = st.number_input("Cost Price", min_value=0.0, step=0.1)
         
         submitted = st.form_submit_button("Save Product")
         if submitted:
