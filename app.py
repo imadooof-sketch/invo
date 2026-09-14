@@ -1,6 +1,9 @@
 import sqlite3
 import streamlit as st
 import pandas as pd
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+import io
 
 st.set_page_config(page_title="Store Dashboard", page_icon="📊", layout="wide")
 
@@ -27,7 +30,7 @@ total_value = 0.0
 if not df_calc.empty:
     for _, row in df_calc.iterrows():
         units = row["quantity_unit"] if row["quantity_unit"] else 0
-        cartons = row["quantity_carton" ] if row["quantity_carton"] else 0
+        cartons = row["quantity_carton"] if row["quantity_carton"] else 0
         cap = row["carton_capacity"] if row["carton_capacity"] else 12
         cost = row["cost_price"] if row["cost_price"] else 0.0
         total_value += ((cartons * cap) + units) * (cost / cap)
@@ -35,49 +38,36 @@ if not df_calc.empty:
 st.markdown("### Store Dashboard")
 st.markdown(f"**Store Inventory Value: ${total_value:,.2f}**")
 
-col1, col2, col3, col4, col5 = st.columns(5)
-with col1:
-    btn_inventory = st.button("Inventory SKU")
-with col2:
-    btn_add = st.button("+ Add Item")
-with col3:
-    btn_invoices = st.button("Invoices")
-with col4:
-    btn_report = st.button("Print Report")
-with col5:
-    btn_pdf = st.button("Export PDF")
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["Inventory SKU", "+ Add Item", "Invoices", "Print Report", "Export PDF"])
 
-st.markdown("---")
-st.markdown("#### Barcode Scan / Manual")
-scan_col1, scan_col2 = st.columns([3, 1])
-with scan_col1:
-    barcode_input = st.text_input("Scan Barcode or Item SKU & press Enter", label_visibility="collapsed", placeholder="Scan Barcode or Item SKU & press Enter")
-with scan_col2:
-    scan_cam = st.button("Scan Cam")
+with tab1:
+    st.markdown("#### Barcode Scan / Manual")
+    scan_col1, scan_col2 = st.columns([3, 1])
+    with scan_col1:
+        barcode_input = st.text_input("Scan Barcode or Item SKU & press Enter", placeholder="Scan Barcode or Item SKU & press Enter", label_visibility="collapsed", key="barcode_search")
+    with scan_col2:
+        st.button("Scan Cam")
 
-st.markdown("#### Live Search (By Name or Category)")
-search_input = st.text_input("Type Item Name or Category to Filter List", label_visibility="collapsed", placeholder="Type Item Name or Category to Filter List")
+    st.markdown("#### Live Search (By Name or Category)")
+    search_input = st.text_input("Type Item Name or Category to Filter List", placeholder="Type Item Name or Category to Filter List", label_visibility="collapsed", key="live_search")
 
-st.markdown("#### Inventory Items (Click Product Name for all sizes and details)")
+    df = pd.read_sql("SELECT * FROM inventory", conn)
+    if search_input and not df.empty:
+        df = df[df['name'].str.contains(search_input, case=False, na=False) | df['category'].str.contains(search_input, case=False, na=False) | df['barcode'].str.contains(search_input, case=False, na=False)]
+    elif barcode_input and not df.empty:
+        df = df[df['barcode'].str.contains(barcode_input, case=False, na=False)]
 
-df = pd.read_sql("SELECT * FROM inventory", conn)
+    if not df.empty:
+        display_df = df[["name", "category", "size", "quantity_unit", "quantity_carton", "cost_price"]].copy()
+        display_df["Total Purchase Cost"] = df.apply(lambda r: ((r["quantity_carton"] * r["carton_capacity"]) + r["quantity_unit"]) * (r["cost_price"] / r["carton_capacity"]), axis=1)
+        display_df.columns = ["Product Name", "Category", "Size", "Units", "Cartons", "Cost Price", "Total Purchase Cost"]
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No items found in inventory.")
 
-if search_input and not df.empty:
-    df = df[df['name'].str.contains(search_input, case=False, na=False) | df['category'].str.contains(search_input, case=False, na=False)]
-
-if not df.empty:
-    display_df = df[["name", "category"]].copy()
-    display_df["Total Purchase Cost"] = df.apply(lambda r: ((r["quantity_carton"] * r["carton_capacity"]) + r["quantity_unit"]) * (r["cost_price"] / r["carton_capacity"]), axis=1)
-    display_df.columns = ["Product Name", "Category", "Total Purchase Cost"]
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
-else:
-    empty_df = pd.DataFrame(columns=["Product Name", "Category", "Total Purchase Cost"])
-    st.dataframe(empty_df, use_container_width=True, hide_index=True)
-
-if btn_add:
-    st.markdown("---")
+with tab2:
     st.subheader("Add New Item")
-    with st.form("dashboard_add_form"):
+    with st.form("add_form_tab"):
         b_code = st.text_input("Barcode")
         b_cat = st.text_input("Category")
         b_name = st.text_input("Name")
@@ -94,5 +84,52 @@ if btn_add:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (b_code, b_cat, b_name, b_size, b_qu, b_qc, b_cap, b_cost))
             conn.commit()
-            st.success("Product added successfully! Refresh the page to see updates.")
+            st.success("Product added successfully!")
+
+with tab3:
+    st.subheader("Invoices & Sales")
+    df_inv = pd.read_sql("SELECT * FROM inventory", conn)
+    if not df_inv.empty:
+        sel_item = st.selectbox("Select Product to Sell", df_inv["name"].tolist())
+        row = df_inv[df_inv["name"] == sel_item].iloc[0]
+        avail_units = row["quantity_unit"]
+        price_val = row["cost_price"]
+        
+        st.write(f"Available Units: {avail_units} | Cost Price: {price_val}")
+        sell_qty = st.number_input("Quantity to Sell", min_value=1, max_value=max(1, int(avail_units)), step=1)
+        
+        if st.button("Complete Sale"):
+            new_units = max(0, avail_units - sell_qty)
+            cursor.execute("UPDATE inventory SET quantity_unit = ? WHERE name = ?", (new_units, sel_item))
+            conn.commit()
+            st.success(f"Sale completed successfully! Remaining units: {new_units}")
+    else:
+        st.warning("No products available for invoicing.")
+
+with tab4:
+    st.subheader("Print Report Preview")
+    df_rep = pd.read_sql("SELECT name, category, size, quantity_unit, quantity_carton, cost_price FROM inventory", conn)
+    if not df_rep.empty:
+        st.dataframe(df_rep, use_container_width=True)
+    else:
+        st.info("No data available to print.")
+
+with tab5:
+    st.subheader("Export PDF Report")
+    if st.button("Generate PDF File"):
+        buffer = io.BytesIO()
+        p = canvas.Canvas(buffer, pagesize=letter)
+        p.drawString(100, 750, "Store Inventory Report")
+        
+        df_pdf = pd.read_sql("SELECT name, category, quantity_unit, cost_price FROM inventory", conn)
+        y = 700
+        for _, r in df_pdf.iterrows():
+            p.drawString(100, y, f"Item: {r['name']} | Category: {r['category']} | Qty: {r['quantity_unit']} | Cost: {r['cost_price']}")
+            y -= 20
+            if y < 50:
+                p.showPage()
+                y = 750
+        p.save()
+        buffer.seek(0)
+        st.download_button(label="Download PDF", data=buffer, file_name="inventory_report.pdf", mime="application/pdf")
 
